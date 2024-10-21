@@ -15,7 +15,7 @@ func BenchmarkWorkerPool(b *testing.B) {
 	b.ResetTimer()
 
 	// Submit tasks
-	for i := 0; i < 100000; i++ {
+	for i := 0; i < b.N; i++ {
 		wp.Submit(Task{
 			TraceID: "Task-" + strconv.Itoa(i),
 			Action: func() error {

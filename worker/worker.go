@@ -14,14 +14,13 @@ type Task struct {
 
 // WorkerPool manages a pool of workers to process tasks.
 type WorkerPool struct {
-	tasks       chan Task // Channel to send tasks to workers
-	rg          *threading.RoutineGroup
-	numWorkers  int
-	shutdownCh  chan struct{}
-	mu          *sync.Mutex // pointer to the mutex
-	cond        *sync.Cond  // shared data from mutex to synchronize
-	isShutdown  bool
-	isQueueFull bool
+	tasks      chan Task // Channel to send tasks to workers
+	rg         *threading.RoutineGroup
+	numWorkers int
+	shutdownCh chan struct{}
+	mu         *sync.Mutex // pointer to the mutex
+	cond       *sync.Cond  // shared data from mutex to synchroniz
+	isShutdown bool
 }
 
 // NewWorkerPool creates a new worker pool.
@@ -29,14 +28,13 @@ func NewWorkerPool(numWorkers int, bufferSize int) *WorkerPool {
 	logx.Info("[WORKER] Starting...")
 	mu := new(sync.Mutex)
 	wp := WorkerPool{
-		tasks:       make(chan Task, bufferSize),
-		rg:          threading.NewRoutineGroup(),
-		numWorkers:  numWorkers,
-		shutdownCh:  make(chan struct{}),
-		isShutdown:  false,
-		isQueueFull: false,
-		cond:        sync.NewCond(mu),
-		mu:          mu,
+		tasks:      make(chan Task, bufferSize),
+		rg:         threading.NewRoutineGroup(),
+		numWorkers: numWorkers,
+		shutdownCh: make(chan struct{}),
+		isShutdown: false,
+		cond:       sync.NewCond(mu),
+		mu:         mu,
 	}
 	return &wp
 }
@@ -44,7 +42,6 @@ func NewWorkerPool(numWorkers int, bufferSize int) *WorkerPool {
 // Start initializes the worker pool and starts the workers.
 func (wp *WorkerPool) Start() {
 	for i := 0; i < wp.numWorkers; i++ {
-		// when run anything, it' always in waitGroup
 		wp.rg.RunSafe(func() {
 			for {
 				select {
@@ -58,6 +55,7 @@ func (wp *WorkerPool) Start() {
 							} else {
 								logx.Infof("[WORKER] Completed task with TraceID: %s", task.TraceID)
 							}
+							wp.cond.Signal()
 						})
 					}
 				case <-wp.shutdownCh: // Check for shutdown signal
@@ -76,25 +74,18 @@ func (wp *WorkerPool) Submit(task Task) {
 
 	// Do not add tasks if the pool is shutting down
 	if wp.isShutdown {
+		logx.Info("[WORKER] Cannot submit task; worker pool is shutting down.")
 		return
 	}
 
 	// Wait until there's space in the task queue (blocking behavior)
-	if wp.isQueueFull {
-		logx.Info("[WORKER] Queue is full. Task will be processed as space becomes available.")
+	for len(wp.tasks) == cap(wp.tasks) {
+		logx.Infof("[WORKER] Queue is full. Waiting for space to submit task with TraceID: %v", task.TraceID)
 		wp.cond.Wait() // Wait until signaled that space is available
 	}
 
+	// Submit the task since there is space available
 	wp.tasks <- task
-
-	// Signal that there is a task available for processing
-	if len(wp.tasks) == cap(wp.tasks) {
-		wp.isQueueFull = true // Mark queue as full
-	} else {
-		wp.isQueueFull = false // Mark queue as not full
-		wp.cond.Signal()       // Signal that space is available
-	}
-
 	logx.Infof("[WORKER] Task submitted successfully with TraceID: %v", task.TraceID)
 }
 
@@ -109,8 +100,8 @@ func (wp *WorkerPool) Stop() {
 	logx.Info("[WORKER] Received termination signal, shutting down...")
 	wp.isShutdown = true
 
-	close(wp.tasks) // Signal  to stop
 	close(wp.shutdownCh)
-	wp.rg.Wait() // Wait for all workers to finish
+	wp.rg.Wait()    // Wait for all workers to finish
+	close(wp.tasks) // Signal  to stop
 	logx.Info("[WORKER] All workers have finished. Worker pool shutdown complete.")
 }
